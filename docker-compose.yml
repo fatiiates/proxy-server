@@ -1,0 +1,12 @@
+services:
+  proxy:
+    image: reverse-proxy
+    build:
+      context: proxy
+
+  service:
+    image: summation-service
+    build:
+      context: sample/service
+    ports:
+      - 9090:5000
