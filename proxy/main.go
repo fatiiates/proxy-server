@@ -8,19 +8,22 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
 type Proxy struct {
 	addr          string
 	services      []string
-	requestNumber int
-	sem           chan int
+	requestNumber uint32
 	pickOrigin    func() string
 }
 
 func (p *Proxy) Start() {
 	originServerHandler := http.HandlerFunc(p.ReqHandler)
+
+	p.services = append(p.services, "http://0.0.0.0:8080")
+	p.services = append(p.services, "http://0.0.0.0:8081")
 
 	if os.Getenv("LOAD_BALANCING_METHOD") == "random" {
 		p.pickOrigin = p.PickByRandomService
@@ -30,22 +33,21 @@ func (p *Proxy) Start() {
 		p.pickOrigin = p.PickByRandomService
 	}
 
-	p.sem = make(chan int, 10)
-
 	log.Fatal(http.ListenAndServe(p.addr, originServerHandler))
 }
 
 func (p *Proxy) ReqHandler(rw http.ResponseWriter, req *http.Request) {
-	p.sem <- 1
 
-	go func() {
-		p.Request(rw, req)
-		<-p.sem
-	}()
+	p.Request(rw, req)
 }
 
 func (p *Proxy) Request(rw http.ResponseWriter, req *http.Request) {
 	fmt.Printf("[reverse proxy server] received request at: %s\n", time.Now())
+
+	if req.Proto != "HTTP/1.1" {
+		rw.WriteHeader(http.StatusHTTPVersionNotSupported)
+		return
+	}
 
 	URL, err := url.Parse(p.pickOrigin())
 	if err != nil {
@@ -53,7 +55,6 @@ func (p *Proxy) Request(rw http.ResponseWriter, req *http.Request) {
 		_, _ = fmt.Fprint(rw, err)
 		return
 	}
-
 	// set req Host, URL and Request URI to forward a request to the origin server
 	req.Host = URL.Host
 	req.URL.Host = URL.Host
@@ -63,6 +64,7 @@ func (p *Proxy) Request(rw http.ResponseWriter, req *http.Request) {
 	// save the response from the origin server
 	originServerResponse, err := http.DefaultClient.Do(req)
 	if err != nil {
+		fmt.Println(err)
 		rw.WriteHeader(http.StatusInternalServerError)
 		_, _ = fmt.Fprint(rw, err)
 		return
@@ -80,12 +82,15 @@ func (p *Proxy) PickByRandomService() string {
 
 func (p *Proxy) PickServiceByRoundRobin() string {
 	// picking a service by round robin method
-	return p.services[p.requestNumber%len(p.services)]
+	n := atomic.AddUint32(&p.requestNumber, 1)
+	service := p.services[int(n)%len(p.services)]
+
+	return service
 }
 
 func main() {
 	p := &Proxy{
-		addr: "localhost:8081",
+		addr: "localhost:5000",
 	}
 	p.Start()
 }
