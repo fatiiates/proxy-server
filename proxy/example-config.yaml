@@ -1,0 +1,13 @@
+proxy:
+  method: "round-robin"
+  listen:
+    address: "0.0.0.0"
+    port: 5000
+  services:
+    - name: proxy-test
+      domain: proxy-test.fatiiates.com
+      hosts:
+        - address: "10.0.0.3"
+          port: 5000
+        - address: "10.0.0.4"
+          port: 5000
